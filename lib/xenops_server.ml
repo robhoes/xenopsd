@@ -733,17 +733,17 @@ let rec atomics_of_operation = function
 	| VM_start id ->
 		[
 			VM_hook_script(id, Xenops_hooks.VM_pre_start, Xenops_hooks.reason__none);
-			VM_create (id, None);
+	(*		VM_create (id, None);*)
 			VM_build id;
 		] @ (List.map (fun vbd -> VBD_set_active (vbd.Vbd.id, true))
 			(VBD_DB.vbds id)
 		) @	(List.concat (List.map (fun vbd -> Opt.default [] (Opt.map (fun x -> [ VBD_epoch_begin (vbd.Vbd.id, x) ]) vbd.Vbd.backend))
 			(VBD_DB.vbds id)
-		)) @ (List.map (fun vbd -> VBD_plug vbd.Vbd.id)
-			(VBD_DB.vbds id |> vbd_plug_order)
-		) @ (List.map (fun vif -> VIF_set_active (vif.Vif.id, true))
+		)) @ (*(List.map (fun vbd -> VBD_plug vbd.Vbd.id)
+			(VBD_DB.vbds id |> vbd_plug_order |> List.tl)
+		) @*) (List.map (fun vif -> VIF_set_active (vif.Vif.id, true))
 			(VIF_DB.vifs id)
-		) @ (List.map (fun vif -> VIF_plug vif.Vif.id)
+		) @(* (List.map (fun vif -> VIF_plug vif.Vif.id)
 			(VIF_DB.vifs id |> vif_plug_order)
 		) @ [
 			(* Unfortunately this has to be done after the vbd,vif 
@@ -755,7 +755,7 @@ let rec atomics_of_operation = function
 			(* We hotplug PCI devices into HVM guests via qemu, since
 			   otherwise hotunplug triggers some kind of unfixed race
 			   condition causing an interrupt storm. *)
-		] @ (List.map (fun pci -> PCI_plug pci.Pci.id)
+		] @*) (List.map (fun pci -> PCI_plug pci.Pci.id)
 			(PCI_DB.pcis id |> pci_plug_order)
 		) @ [
 			(* At this point the domain is considered survivable. *)
@@ -763,7 +763,7 @@ let rec atomics_of_operation = function
 		]
 	| VM_shutdown (id, timeout) ->
 		(Opt.default [] (Opt.map (fun x -> [ VM_shutdown_domain(id, Halt, x) ]) timeout)
-		) @ [
+		)(* @ [
 			(* At this point we have a shutdown domain (ie Needs_poweroff) *)
 			VM_destroy_device_model id;
 		] @ (List.map (fun vbd -> VBD_unplug (vbd.Vbd.id, true))
@@ -772,18 +772,18 @@ let rec atomics_of_operation = function
 			(VIF_DB.vifs id)
 		) @ (List.map (fun pci -> PCI_unplug pci.Pci.id)
 			(PCI_DB.pcis id)
-		) @ [
+		)*) @ [
 			VM_destroy id
 		]
 	| VM_restore_devices id ->
 		[
 		] @ (List.map (fun vbd -> VBD_set_active (vbd.Vbd.id, true))
 			(VBD_DB.vbds id)
-		) @ (List.map (fun vbd -> VBD_plug vbd.Vbd.id)
+		) @(* (List.map (fun vbd -> VBD_plug vbd.Vbd.id)
 			(VBD_DB.vbds id |> vbd_plug_order)
-		) @ (List.map (fun vif -> VIF_set_active (vif.Vif.id, true))
+		) @*) (List.map (fun vif -> VIF_set_active (vif.Vif.id, true))
 			(VIF_DB.vifs id)
-		) @ (List.map (fun vif -> VIF_plug vif.Vif.id)
+		) @(* (List.map (fun vif -> VIF_plug vif.Vif.id)
 			(VIF_DB.vifs id |> vif_plug_order)
 		) @ [
 			(* Unfortunately this has to be done after the devices have been created since
@@ -792,7 +792,7 @@ let rec atomics_of_operation = function
 			VM_create_device_model (id, true);
 			(* We hotplug PCI devices into HVM guests via qemu, since otherwise hotunplug triggers
 			   some kind of unfixed race condition causing an interrupt storm. *)
-		] @ (List.map (fun pci -> PCI_plug pci.Pci.id)
+		] @*) (List.map (fun pci -> PCI_plug pci.Pci.id)
 			(PCI_DB.pcis id |> pci_plug_order)
 		)
 	| VM_poweroff (id, timeout) ->
@@ -840,7 +840,7 @@ let rec atomics_of_operation = function
 		]
 	| VM_resume (id, data) ->
 		[
-			VM_create (id, None);
+(*			VM_create (id, None);*)
 			VM_restore (id, data);
 		] @ (atomics_of_operation (VM_restore_devices id)
 		) @ [
@@ -1019,7 +1019,7 @@ let perform_atomic ~progress_callback ?subtask (op: atomic) (t: Xenops_task.t) :
 			B.VM.create t memory_upper_bound (VM_DB.read_exn id)
 		| VM_build id ->
 			debug "VM.build %s" id;
-			let vbds : Vbd.t list = VBD_DB.vbds id in
+			let vbds : Vbd.t list = VBD_DB.vbds id |> vbd_plug_order in
 			let vifs : Vif.t list = VIF_DB.vifs id in
 			B.VM.build t (VM_DB.read_exn id) vbds vifs
 		| VM_shutdown_domain (id, reason, timeout) ->
@@ -1300,7 +1300,7 @@ and perform ?subtask (op: operation) (t: Xenops_task.t) : unit =
 
 			debug "VM.receive_memory calling create";
 			perform_atomics [
-				VM_create (id, Some memory_limit);
+		(*		VM_create (id, Some memory_limit);*)
 				VM_restore (id, FD s);
 			] t;
 			debug "VM.receive_memory restore complete";
