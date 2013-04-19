@@ -387,6 +387,9 @@ module Mem = struct
 			| Unix.Unix_error(Unix.ECONNREFUSED, "connect", _) ->
 				info "ECONNREFUSED talking to squeezed: assuming it has been switched off";
 				None
+			| Unix.Unix_error(Unix.ENOENT, "connect", _) ->
+				info "ENOENT talking to squeezed: assuming it has never been started";
+				None
 	open Memory_client
 	let do_login dbg = wrap (fun () -> Client.login dbg "xenopsd")
 
