@@ -1003,7 +1003,7 @@ module VM = struct
 				debug "%s" m;
 				raise e
 
-	let build task vm vbds vifs = on_domain (build_domain vm vbds vifs) Newest task vm
+	let build ?restore_fd task vm vbds vifs = on_domain (build_domain vm vbds vifs) Newest task vm
 
 	let create_device_model_exn vbds vifs saved_state xc xs task vm di =
 		let vmextra = DB.read_exn vm.Vm.id in
