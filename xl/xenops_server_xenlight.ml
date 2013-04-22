@@ -22,6 +22,7 @@ open Xenops_task
 
 module D = Debug.Make(struct let name = service_name end)
 open D
+module DX = Debug.Make(struct let name = "libxl" end)
 
 (* libxl_internal.h:DISABLE_UDEV_PATH *)
 let disable_udev_path = "libxl/disable_udev"
@@ -37,9 +38,42 @@ let _mount = "/bin/mount"
 let _umount = "/bin/umount"
 let _ionice = "/usr/bin/ionice"
 
-let logger = Xentoollog.create_stdio_logger ()
+let vmessage min_level level errno ctx msg =
+	let errno_str = match errno with None -> "" | Some s -> Printf.sprintf ": errno=%d" s
+	and ctx_str = match ctx with None -> "" | Some s -> Printf.sprintf "%s" s in
+	if compare min_level level <= 0 then
+		let open Xentoollog in
+		match level with
+		| Debug ->
+			DX.debug "%s%s: %s" ctx_str errno_str msg
+		| Verbose
+		| Detail
+		| Progress
+		| Info
+		| Notice ->
+			DX.info "%s%s: %s" ctx_str errno_str msg
+		| Warn ->
+			DX.warn "%s%s: %s" ctx_str errno_str msg
+		| Error ->
+			DX.error "%s%s: %s" ctx_str errno_str msg
+		| Critical ->
+			DX.error "CRITICAL: %s%s: %s" ctx_str errno_str msg
+
+let progress ctx what percent dne total =
+	let nl = if dne = total then "\n" else "" in
+	DX.debug "\rProgress %s %d%% (%Ld/%Ld)%s" what percent dne total nl
+
+let create_logger ?(level=Xentoollog.Info) () =
+	let open Xentoollog in
+	let cbs = {
+		vmessage = vmessage level;
+		progress = progress;
+	} in
+	create "Xentoollog.stdio_logger" cbs
+
+(* let logger = Xentoollog.create_stdio_logger () *)
 (* let logger = Xenops_logger.create () *)
-(* let logger = Xenops_logger.create ~level:Xentoollog.Debug () *)
+let logger = create_logger ~level:Xentoollog.Debug ()
 
 let run cmd args =
 	debug "%s %s" cmd (String.concat " " args);
@@ -875,7 +909,7 @@ module VBD = struct
 							| Device_not_connected ->
 								debug "VM = %s; VBD = %s; Ignoring missing device" vm (id_of vbd);
 								None in
-					Xenlight.with_ctx (fun ctx ->
+					Xenlight.with_ctx ~logger (fun ctx ->
 						let vdev = Opt.map Device_number.to_linux_device vbd.position in
 						match vdev, domid, device with
 						| Some vdev, Some domid, Some device ->
@@ -931,7 +965,7 @@ module VBD = struct
 				if not hvm
 				then plug task vm { vbd with backend = Some disk }
 				else begin
-					Xenlight.with_ctx (fun ctx ->
+					Xenlight.with_ctx ~logger (fun ctx ->
 						let vdev = Opt.map Device_number.to_linux_device vbd.position in
 						let domid = domid_of_uuid ~xs Newest (uuid_of_string vm) in
 						match vdev, domid with
@@ -966,7 +1000,7 @@ module VBD = struct
 	let eject task vm vbd =
 		on_frontend
 			(fun xc xs frontend_domid hvm ->
-				Xenlight.with_ctx (fun ctx ->
+				Xenlight.with_ctx ~logger (fun ctx ->
 					let vdev = Opt.map Device_number.to_linux_device vbd.position in
 					let domid = domid_of_uuid ~xs Newest (uuid_of_string vm) in
 					match vdev, domid with
@@ -1232,7 +1266,7 @@ module VIF = struct
 	let plug task vm = plug_exn task vm
 
 	let unplug task vm vif force =
-		Xenlight.with_ctx (fun ctx ->
+		Xenlight.with_ctx ~logger (fun ctx ->
 			on_frontend (fun xc xs frontend_domid _ ->
 				try
 					let nic = Xenlight.Device_nic.of_devid ctx frontend_domid vif.position in
@@ -1675,7 +1709,7 @@ module VM = struct
 			if DB.exists vm.Vm.id then DB.remove vm.Vm.id;
 		end;
 		debug "Calling Xenlight.domain_destroy domid=%d" domid;
-		Xenlight.with_ctx (fun ctx -> Xenlight.domain_destroy ctx domid);
+		Xenlight.with_ctx ~logger (fun ctx -> Xenlight.domain_destroy ctx domid);
 
 		let log_exn_continue msg f x = try f x with e -> debug "Safely ignoring exception: %s while %s" (Printexc.to_string e) msg in
 		let log_exn_rm ~xs x = log_exn_continue ("xenstore-rm " ^ x) xs.Xs.rm x in
@@ -1693,14 +1727,14 @@ module VM = struct
 	let pause = on_domain (fun xc xs _ _ di ->
 		let open Xenlight.Dominfo in
 		if di.current_memkb = 0L then raise (Domain_not_built);
-		Xenlight.with_ctx (fun ctx -> Xenlight.domain_pause ctx di.domid)
+		Xenlight.with_ctx ~logger (fun ctx -> Xenlight.domain_pause ctx di.domid)
 	(*	Domain.pause ~xc di.domid *)
 	) Newest
 
 	let unpause = on_domain (fun xc xs _ _ di ->
 		let open Xenlight.Dominfo in
 		if di.current_memkb = 0L then raise (Domain_not_built);
-		Xenlight.with_ctx (fun ctx -> Xenlight.domain_unpause ctx di.domid)
+		Xenlight.with_ctx ~logger (fun ctx -> Xenlight.domain_unpause ctx di.domid)
 	(*	Domain.unpause ~xc di.domid;
 		Opt.iter
 			(fun stubdom_domid ->
@@ -2149,10 +2183,10 @@ module VM = struct
 					match restore_fd with
 					| None ->
 						debug "Calling Xenlight.domain_create_new";
-						Xenlight.with_ctx (fun ctx -> Xenlight.domain_create_new ctx domain_config)
+						Xenlight.with_ctx ~logger (fun ctx -> Xenlight.domain_create_new ctx domain_config)
 					| Some fd ->
 						debug "Calling Xenlight.domain_create_restore";
-						Xenlight.with_ctx (fun ctx -> Xenlight.domain_create_restore ctx domain_config fd)
+						Xenlight.with_ctx ~logger (fun ctx -> Xenlight.domain_create_restore ctx domain_config fd)
 				in
 				debug "Xenlight has created domain %d" domid;
 
@@ -2214,13 +2248,13 @@ module VM = struct
 					match reason with
 					| Reboot ->
 						debug "Calling Xenlight.domain_reboot domid=%d" domid;
-						Xenlight.with_ctx (fun ctx -> Xenlight.domain_reboot ctx domid);
+						Xenlight.with_ctx ~logger (fun ctx -> Xenlight.domain_reboot ctx domid);
 						true
 					| PowerOff -> false
 					| Suspend -> false
 					| Halt ->
 						debug "Calling Xenlight.domain_shutdown domid=%d" domid;
-						Xenlight.with_ctx (fun ctx -> Xenlight.domain_shutdown ctx domid);
+						Xenlight.with_ctx ~logger (fun ctx -> Xenlight.domain_shutdown ctx domid);
 						true
 					| S3Suspend -> false
 				with Watch.Timeout _ ->
@@ -2233,7 +2267,7 @@ module VM = struct
 				let open Xenlight.Dominfo in
 				let domid = di.domid in
 				debug "Calling Xenlight.domain_wait_shutdown domid=%d" domid;
-				Xenlight.with_ctx (fun ctx -> Xenlight.domain_wait_shutdown ctx domid);
+				Xenlight.with_ctx ~logger (fun ctx -> Xenlight.domain_wait_shutdown ctx domid);
 				true
 			) Oldest task vm
 
@@ -2338,7 +2372,7 @@ module VM = struct
 							);
 						*)
 						debug "Calling Xenlight.domain_suspend domid=%d" domid;
-						Xenlight.with_ctx (fun ctx -> Xenlight.domain_suspend ctx domid fd);
+						Xenlight.with_ctx ~logger (fun ctx -> Xenlight.domain_suspend ctx domid fd);
 						ignore (wait_shutdown task vm Suspend 1200.);
 
 						(* Record the final memory usage of the domain so we know how
