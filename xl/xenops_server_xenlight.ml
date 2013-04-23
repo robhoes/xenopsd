@@ -38,6 +38,8 @@ let _mount = "/bin/mount"
 let _umount = "/bin/umount"
 let _ionice = "/usr/bin/ionice"
 
+(* libxl logging and context *)
+
 let vmessage min_level level errno ctx msg =
 	let errno_str = match errno with None -> "" | Some s -> Printf.sprintf ": errno=%d" s
 	and ctx_str = match ctx with None -> "" | Some s -> Printf.sprintf "%s" s in
@@ -71,9 +73,17 @@ let create_logger ?(level=Xentoollog.Info) () =
 	} in
 	create "Xentoollog.stdio_logger" cbs
 
-(* let logger = Xentoollog.create_stdio_logger () *)
-(* let logger = Xenops_logger.create () *)
-let logger = create_logger ~level:Xentoollog.Debug ()
+let ctx = ref None
+
+let with_ctx f =
+	match !ctx with
+	| None ->
+		error "No libxl context!";
+		failwith "No libxl context!"
+	| Some ctx' ->
+		f ctx'
+
+(* *)
 
 let run cmd args =
 	debug "%s %s" cmd (String.concat " " args);
@@ -178,7 +188,7 @@ type domain_selection =
 let di_of_uuid ~xs domain_selection uuid =
 	let open Xenlight.Dominfo in
 	let uuid' = Uuidm.to_string uuid in
-	let all = Xenlight.with_ctx ~logger (fun ctx -> list ctx) in
+	let all = with_ctx (fun ctx -> list ctx) in
 	let possible = List.filter (fun x -> uuid_of_string x.uuid = uuid) all in
 
 	let oldest_first = List.sort
@@ -217,7 +227,7 @@ let domid_of_uuid ~xs domain_selection uuid =
 		None
 
 let get_uuid ~xc domid =
-	let di = Xenlight.with_ctx ~logger (fun ctx -> Xenlight.Dominfo.get ctx domid) in
+	let di = with_ctx (fun ctx -> Xenlight.Dominfo.get ctx domid) in
 	uuid_of_string di.Xenlight.Dominfo.uuid
 
 let create_vbd_frontend ~xc ~xs task frontend_domid vdi =
@@ -572,7 +582,7 @@ module HOST = struct
 	include Xenops_server_skeleton.HOST
 
 	let get_console_data () =
-		Xenlight.with_ctx ~logger (fun ctx ->
+		with_ctx (fun ctx ->
 			debug "Calling Xenlight.xen_console_read";
 			let raw = String.concat "" (Xenlight.xen_console_read ctx) in
 			(* There may be invalid XML characters in the buffer, so remove them *)
@@ -587,14 +597,14 @@ module HOST = struct
 		)
 
 	let get_total_memory_mib () =
-		Xenlight.with_ctx ~logger (fun ctx ->
+		with_ctx (fun ctx ->
 			let pages_per_mib = 256L in
 			debug "Calling Xenlight.Physinfo_total_pages";
 			let pages = (Xenlight.Physinfo.get ctx).Xenlight.Physinfo.total_pages in
 			Int64.div pages pages_per_mib
 		)
 	let send_debug_keys keys =
-		Xenlight.with_ctx ~logger (fun ctx ->
+		with_ctx (fun ctx ->
 			debug "Calling Xenlight.send_debug_keys";
 			Xenlight.send_debug_keys ctx keys
 		)
@@ -624,7 +634,7 @@ module PCI = struct
 			)
 		in
 		let open Xenlight in
-		with_ctx ~logger (fun ctx ->
+		with_ctx (fun ctx ->
 			let all = match domid with
 				| Some domid ->
 					Device_pci.list ctx domid
@@ -662,7 +672,7 @@ module PCI = struct
 
 	let plug task vm pci =
 		on_frontend (fun _ _ frontend_domid _ ->
-			Xenlight.with_ctx ~logger (fun ctx ->
+			with_ctx (fun ctx ->
 				let open Xenlight.Device_pci in
 				let pci' = pre_plug vm pci in
 				debug "Calling Xenlight.Device_pci.assignable_remove";
@@ -685,7 +695,7 @@ module PCI = struct
 		let power_mgmt = if Opt.default non_persistent.VmExtra.pci_power_mgmt pci.power_mgmt then true else false in
 		let permissive = true in
 		on_frontend (fun _ _ frontend_domid _ ->
-			Xenlight.with_ctx ~logger (fun ctx ->
+			with_ctx (fun ctx ->
 				let open Xenlight.Device_pci in
 				let pci' = {
 					func; dev; bus; domain; vdevfn; vfunc_mask; msitranslate; power_mgmt; permissive;
@@ -858,7 +868,7 @@ module VBD = struct
 							let disk, devid, extra_backend_keys, backend_domid = pre_plug task vm hvm vbd in
 
 							(* call libxenlight to plug vbd *)
-							Xenlight.with_ctx ~logger (fun ctx ->
+							with_ctx (fun ctx ->
 								let open Xenlight.Device_disk in
 								debug "Calling Xenlight.Device_disk.add";
 								add ctx disk frontend_domid
@@ -909,7 +919,7 @@ module VBD = struct
 							| Device_not_connected ->
 								debug "VM = %s; VBD = %s; Ignoring missing device" vm (id_of vbd);
 								None in
-					Xenlight.with_ctx ~logger (fun ctx ->
+					with_ctx (fun ctx ->
 						let vdev = Opt.map Device_number.to_linux_device vbd.position in
 						match vdev, domid, device with
 						| Some vdev, Some domid, Some device ->
@@ -965,7 +975,7 @@ module VBD = struct
 				if not hvm
 				then plug task vm { vbd with backend = Some disk }
 				else begin
-					Xenlight.with_ctx ~logger (fun ctx ->
+					with_ctx (fun ctx ->
 						let vdev = Opt.map Device_number.to_linux_device vbd.position in
 						let domid = domid_of_uuid ~xs Newest (uuid_of_string vm) in
 						match vdev, domid with
@@ -1000,7 +1010,7 @@ module VBD = struct
 	let eject task vm vbd =
 		on_frontend
 			(fun xc xs frontend_domid hvm ->
-				Xenlight.with_ctx ~logger (fun ctx ->
+				with_ctx (fun ctx ->
 					let vdev = Opt.map Device_number.to_linux_device vbd.position in
 					let domid = domid_of_uuid ~xs Newest (uuid_of_string vm) in
 					match vdev, domid with
@@ -1242,7 +1252,7 @@ module VIF = struct
 						let nic = pre_plug vm vif in
 
 						(* call libxenlight to plug vif *)
-						Xenlight.with_ctx ~logger (fun ctx ->
+						with_ctx (fun ctx ->
 							let open Xenlight.Device_nic in
 							debug "Calling Xenlight.Device_nic.add";
 							add ctx nic frontend_domid
@@ -1266,7 +1276,7 @@ module VIF = struct
 	let plug task vm = plug_exn task vm
 
 	let unplug task vm vif force =
-		Xenlight.with_ctx ~logger (fun ctx ->
+		with_ctx (fun ctx ->
 			on_frontend (fun xc xs frontend_domid _ ->
 				try
 					let nic = Xenlight.Device_nic.of_devid ctx frontend_domid vif.position in
@@ -1362,7 +1372,7 @@ module VIF = struct
 				let devid = string_of_int device.frontend.devid in
                 ignore (run !Path.setup_vif_rules ["vif"; domid; devid; "filter"]);
                 (* Update rules for the tap device if the VM has booted HVM with no PV drivers. *)
-				let di = Xenlight.with_ctx ~logger (fun ctx -> Xenlight.Dominfo.get ctx device.frontend.domid) in
+				let di = with_ctx (fun ctx -> Xenlight.Dominfo.get ctx device.frontend.domid) in
 				if di.Xenlight.Dominfo.domain_type = Xenlight.DOMAIN_TYPE_HVM
 				then ignore (run !Path.setup_vif_rules ["tap"; domid; devid; "filter"])
 			)
@@ -1709,7 +1719,7 @@ module VM = struct
 			if DB.exists vm.Vm.id then DB.remove vm.Vm.id;
 		end;
 		debug "Calling Xenlight.domain_destroy domid=%d" domid;
-		Xenlight.with_ctx ~logger (fun ctx -> Xenlight.domain_destroy ctx domid);
+		with_ctx (fun ctx -> Xenlight.domain_destroy ctx domid);
 
 		let log_exn_continue msg f x = try f x with e -> debug "Safely ignoring exception: %s while %s" (Printexc.to_string e) msg in
 		let log_exn_rm ~xs x = log_exn_continue ("xenstore-rm " ^ x) xs.Xs.rm x in
@@ -1727,14 +1737,14 @@ module VM = struct
 	let pause = on_domain (fun xc xs _ _ di ->
 		let open Xenlight.Dominfo in
 		if di.current_memkb = 0L then raise (Domain_not_built);
-		Xenlight.with_ctx ~logger (fun ctx -> Xenlight.domain_pause ctx di.domid)
+		with_ctx (fun ctx -> Xenlight.domain_pause ctx di.domid)
 	(*	Domain.pause ~xc di.domid *)
 	) Newest
 
 	let unpause = on_domain (fun xc xs _ _ di ->
 		let open Xenlight.Dominfo in
 		if di.current_memkb = 0L then raise (Domain_not_built);
-		Xenlight.with_ctx ~logger (fun ctx -> Xenlight.domain_unpause ctx di.domid)
+		with_ctx (fun ctx -> Xenlight.domain_unpause ctx di.domid)
 	(*	Domain.unpause ~xc di.domid;
 		Opt.iter
 			(fun stubdom_domid ->
@@ -2183,10 +2193,10 @@ module VM = struct
 					match restore_fd with
 					| None ->
 						debug "Calling Xenlight.domain_create_new";
-						Xenlight.with_ctx ~logger (fun ctx -> Xenlight.domain_create_new ctx domain_config)
+						with_ctx (fun ctx -> Xenlight.domain_create_new ctx domain_config)
 					| Some fd ->
 						debug "Calling Xenlight.domain_create_restore";
-						Xenlight.with_ctx ~logger (fun ctx -> Xenlight.domain_create_restore ctx domain_config fd)
+						with_ctx (fun ctx -> Xenlight.domain_create_restore ctx domain_config fd)
 				in
 				debug "Xenlight has created domain %d" domid;
 
@@ -2248,13 +2258,13 @@ module VM = struct
 					match reason with
 					| Reboot ->
 						debug "Calling Xenlight.domain_reboot domid=%d" domid;
-						Xenlight.with_ctx ~logger (fun ctx -> Xenlight.domain_reboot ctx domid);
+						with_ctx (fun ctx -> Xenlight.domain_reboot ctx domid);
 						true
 					| PowerOff -> false
 					| Suspend -> false
 					| Halt ->
 						debug "Calling Xenlight.domain_shutdown domid=%d" domid;
-						Xenlight.with_ctx ~logger (fun ctx -> Xenlight.domain_shutdown ctx domid);
+						with_ctx (fun ctx -> Xenlight.domain_shutdown ctx domid);
 						true
 					| S3Suspend -> false
 				with Watch.Timeout _ ->
@@ -2267,7 +2277,7 @@ module VM = struct
 				let open Xenlight.Dominfo in
 				let domid = di.domid in
 				debug "Calling Xenlight.domain_wait_shutdown domid=%d" domid;
-				Xenlight.with_ctx ~logger (fun ctx -> Xenlight.domain_wait_shutdown ctx domid);
+				with_ctx (fun ctx -> Xenlight.domain_wait_shutdown ctx domid);
 				true
 			) Oldest task vm
 
@@ -2372,7 +2382,7 @@ module VM = struct
 							);
 						*)
 						debug "Calling Xenlight.domain_suspend domid=%d" domid;
-						Xenlight.with_ctx ~logger (fun ctx -> Xenlight.domain_suspend ctx domid fd);
+						with_ctx (fun ctx -> Xenlight.domain_suspend ctx domid fd);
 						ignore (wait_shutdown task vm Suspend 1200.);
 
 						(* Record the final memory usage of the domain so we know how
@@ -2641,7 +2651,7 @@ module IntMap = Map.Make(struct type t = int let compare = compare end)
 module IntSet = Set.Make(struct type t = int let compare = compare end)
 
 let list_domains xc =
-	let dis = Xenlight.with_ctx ~logger (fun ctx -> Xenlight.Dominfo.list ctx) in
+	let dis = with_ctx (fun ctx -> Xenlight.Dominfo.list ctx) in
 	let ids = List.map (fun x -> x.Xenlight.Dominfo.domid) dis in
 	List.fold_left (fun map (k, v) -> IntMap.add k v map) IntMap.empty (List.combine ids dis)
 
@@ -3144,6 +3154,10 @@ let init () =
 			xs.Xs.write xe_key xe_val;
 			xs.Xs.setperms xe_key { Xs_protocol.ACL.owner = 0; other = Xs_protocol.ACL.READ; acl = [] }
 	);
+
+	(* Setup a libxl context *)
+	let logger = create_logger ~level:Xentoollog.Debug () in
+	ctx := Some (Xenlight.ctx_alloc logger);
 
 	debug "xenstore is responding to requests";
 	let (_: Thread.t) = Thread.create
