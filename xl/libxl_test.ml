@@ -82,7 +82,6 @@ let test ctx =
 
 let _ =
 	let logger = Xentoollog.create_stdio_logger ~level:Xentoollog.Debug () in
-	with_ctx ~logger (fun ctx ->
-		Lwt_main.run (test ctx);
-	)
+	let ctx = ctx_alloc logger in
+	Lwt_main.run (test ctx)
 
