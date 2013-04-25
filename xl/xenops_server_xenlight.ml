@@ -2190,13 +2190,18 @@ module VM = struct
 
 				(* Start or resume *)
 				let domid =
-					match restore_fd with
-					| None ->
-						debug "Calling Xenlight.domain_create_new";
-						with_ctx (fun ctx -> Xenlight.domain_create_new ctx domain_config)
-					| Some fd ->
-						debug "Calling Xenlight.domain_create_restore";
-						with_ctx (fun ctx -> Xenlight.domain_create_restore ctx domain_config fd)
+					try
+						match restore_fd with
+						| None ->
+							debug "Calling Xenlight.domain_create_new";
+							with_ctx (fun ctx -> Xenlight.domain_create_new ctx domain_config)
+						| Some fd ->
+							debug "Calling Xenlight.domain_create_restore";
+							with_ctx (fun ctx -> Xenlight.domain_create_restore ctx domain_config fd)
+					with
+					| Xenlight.Error (_, msg) as e ->
+						error "error creating domain: %s" msg;
+						raise e
 				in
 				debug "Xenlight has created domain %d" domid;
 
@@ -3158,6 +3163,11 @@ let init () =
 	(* Setup a libxl context *)
 	let logger = create_logger ~level:Xentoollog.Debug () in
 	ctx := Some (Xenlight.ctx_alloc logger);
+
+	with_ctx (fun ctx -> Xenlight_events.event_loop_init ctx);
+	Thread.create (fun () -> with_ctx (fun ctx -> Xenlight_events.event_loop_start ctx)) ();
+	Thread.delay 2.;
+	with_ctx (fun ctx -> Xenlight.evenable_domain_death ctx 47 666);
 
 	debug "xenstore is responding to requests";
 	let (_: Thread.t) = Thread.create

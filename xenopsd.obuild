@@ -45,8 +45,13 @@ executable xenopsd_xenlight
   src-dir: xl
   cdir: xl
   build-deps: xenctrl, xenlight, xenops, xenstore, xenstore.unix, xenstore_transport, xenstore_transport.unix, rpclib, forkexec, xcp, xcp.storage, xcp.memory, sexplib, rpclib.syntax, oclock
-  c-sources: fsync_stubs.c, xenctrlext_stubs.c
+  c-sources: fsync_stubs.c, xenctrlext_stubs.c, poll_stubs.c
   pp: camlp4o
+
+#executable xl-test
+#  main: libxl_test.ml
+#  src-dir: xl
+#  build-deps: xenctrl, xenlight, xenops, xenstore, xenstore.unix, xenstore_transport, xenstore_transport.unix, rpclib, forkexec, xcp, xcp.storage, xcp.memory, sexplib, rpclib.syntax, oclock, lwt, lwt.unix, lwt.syntax, lwt.preemptive
 
 #executable test
 #  main: test.ml
