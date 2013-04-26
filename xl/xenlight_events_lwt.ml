@@ -4,7 +4,7 @@ open Xenops_utils
 module D = Debug.Make(struct let name = "libxl_events_lwt" end)
 open D
 
-let xl_async_callback wakener result =
+let xl_async_callback result wakener =
 	Lwt.wakeup wakener result
 
 let device_nic_add_async ctx nic domid =
