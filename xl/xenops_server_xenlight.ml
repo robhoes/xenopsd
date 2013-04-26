@@ -188,7 +188,9 @@ type domain_selection =
 let di_of_uuid ~xs domain_selection uuid =
 	let open Xenlight.Dominfo in
 	let uuid' = Uuidm.to_string uuid in
-	let all = with_ctx (fun ctx -> list ctx) in
+	let logger = create_logger ~level:Xentoollog.Debug () in
+	let ctx = Xenlight.ctx_alloc logger in
+	let all = list ctx in
 	let possible = List.filter (fun x -> uuid_of_string x.uuid = uuid) all in
 
 	let oldest_first = List.sort
@@ -583,8 +585,8 @@ module HOST = struct
 
 	let get_console_data () =
 		with_ctx (fun ctx ->
-			debug "Calling Xenlight.xen_console_read";
-			let raw = String.concat "" (Xenlight.xen_console_read ctx) in
+			debug "Calling Xenlight.Host.xen_console_read";
+			let raw = String.concat "" (Xenlight.Host.xen_console_read ctx) in
 			(* There may be invalid XML characters in the buffer, so remove them *)
 			let is_printable chr =
 				let x = int_of_char chr in
@@ -605,8 +607,8 @@ module HOST = struct
 		)
 	let send_debug_keys keys =
 		with_ctx (fun ctx ->
-			debug "Calling Xenlight.send_debug_keys";
-			Xenlight.send_debug_keys ctx keys
+			debug "Calling Xenlight.Host.send_debug_keys";
+			Xenlight.Host.send_debug_keys ctx keys
 		)
 end
 
@@ -1719,7 +1721,8 @@ module VM = struct
 			if DB.exists vm.Vm.id then DB.remove vm.Vm.id;
 		end;
 		debug "Calling Xenlight.domain_destroy domid=%d" domid;
-		with_ctx (fun ctx -> Xenlight.domain_destroy ctx domid);
+		with_ctx (fun ctx -> Xenlight_events.async (Xenlight.Domain.destroy ctx domid));
+		debug "Call Xenlight.domain_destroy domid=%d completed" domid;
 
 		let log_exn_continue msg f x = try f x with e -> debug "Safely ignoring exception: %s while %s" (Printexc.to_string e) msg in
 		let log_exn_rm ~xs x = log_exn_continue ("xenstore-rm " ^ x) xs.Xs.rm x in
@@ -1737,14 +1740,14 @@ module VM = struct
 	let pause = on_domain (fun xc xs _ _ di ->
 		let open Xenlight.Dominfo in
 		if di.current_memkb = 0L then raise (Domain_not_built);
-		with_ctx (fun ctx -> Xenlight.domain_pause ctx di.domid)
+		with_ctx (fun ctx -> Xenlight.Domain.pause ctx di.domid)
 	(*	Domain.pause ~xc di.domid *)
 	) Newest
 
 	let unpause = on_domain (fun xc xs _ _ di ->
 		let open Xenlight.Dominfo in
 		if di.current_memkb = 0L then raise (Domain_not_built);
-		with_ctx (fun ctx -> Xenlight.domain_unpause ctx di.domid)
+		with_ctx (fun ctx -> Xenlight.Domain.unpause ctx di.domid)
 	(*	Domain.unpause ~xc di.domid;
 		Opt.iter
 			(fun stubdom_domid ->
@@ -2194,10 +2197,11 @@ module VM = struct
 						match restore_fd with
 						| None ->
 							debug "Calling Xenlight.domain_create_new";
-							with_ctx (fun ctx -> Xenlight.domain_create_new ctx domain_config)
+							(* results of async call must be 0, otherwise something went wrong *)
+							with_ctx (fun ctx -> Xenlight_events.async (Xenlight.Domain.create_new ctx domain_config))
 						| Some fd ->
 							debug "Calling Xenlight.domain_create_restore";
-							with_ctx (fun ctx -> Xenlight.domain_create_restore ctx domain_config fd)
+							with_ctx (fun ctx -> Xenlight_events.async (Xenlight.Domain.create_restore ctx domain_config fd))
 					with
 					| Xenlight.Error (_, msg) as e ->
 						error "error creating domain: %s" msg;
@@ -2262,14 +2266,14 @@ module VM = struct
 				try
 					match reason with
 					| Reboot ->
-						debug "Calling Xenlight.domain_reboot domid=%d" domid;
-						with_ctx (fun ctx -> Xenlight.domain_reboot ctx domid);
+						debug "Calling Xenlight.Domain.reboot domid=%d" domid;
+						with_ctx (fun ctx -> Xenlight.Domain.reboot ctx domid);
 						true
 					| PowerOff -> false
 					| Suspend -> false
 					| Halt ->
-						debug "Calling Xenlight.domain_shutdown domid=%d" domid;
-						with_ctx (fun ctx -> Xenlight.domain_shutdown ctx domid);
+						debug "Calling Xenlight.Domain.shutdown domid=%d" domid;
+						with_ctx (fun ctx -> Xenlight.Domain.shutdown ctx domid);
 						true
 					| S3Suspend -> false
 				with Watch.Timeout _ ->
@@ -2281,8 +2285,8 @@ module VM = struct
 			(fun _ _ _ _ di ->
 				let open Xenlight.Dominfo in
 				let domid = di.domid in
-				debug "Calling Xenlight.domain_wait_shutdown domid=%d" domid;
-				with_ctx (fun ctx -> Xenlight.domain_wait_shutdown ctx domid);
+				debug "Calling Xenlight.Domain.wait_shutdown domid=%d" domid;
+				with_ctx (fun ctx -> Xenlight.Domain.wait_shutdown ctx domid);
 				true
 			) Oldest task vm
 
@@ -2386,8 +2390,9 @@ module VM = struct
 								then raise (Failed_to_shutdown(vm.Vm.id, 1200.));
 							);
 						*)
-						debug "Calling Xenlight.domain_suspend domid=%d" domid;
-						with_ctx (fun ctx -> Xenlight.domain_suspend ctx domid fd);
+						debug "Calling Xenlight.Domain.suspend domid=%d" domid;
+						with_ctx (fun ctx -> Xenlight_events.async (Xenlight.Domain.suspend ctx domid fd));
+						debug "Call Xenlight.Domain.suspend domid=%d completed" domid;
 						ignore (wait_shutdown task vm Suspend 1200.);
 
 						(* Record the final memory usage of the domain so we know how
@@ -3164,10 +3169,10 @@ let init () =
 	let logger = create_logger ~level:Xentoollog.Debug () in
 	ctx := Some (Xenlight.ctx_alloc logger);
 
-	with_ctx (fun ctx -> Xenlight_events.event_loop_init ctx);
-	Thread.create (fun () -> with_ctx (fun ctx -> Xenlight_events.event_loop_start ctx)) ();
-	Thread.delay 2.;
-	with_ctx (fun ctx -> Xenlight.evenable_domain_death ctx 47 666);
+	with_ctx (fun ctx ->
+		Xenlight_events.event_loop_init ctx;
+(*		Xenlight.evenable_domain_death ctx 47 666 *)
+	);
 
 	debug "xenstore is responding to requests";
 	let (_: Thread.t) = Thread.create
