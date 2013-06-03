@@ -2079,41 +2079,66 @@ module VM = struct
 							Memory.HVM.shadow_mib (max_memkb /// 1025L) max_vcpus hvm_info.shadow_multiplier
 						| PV _ -> 0L, 0L
 				in
-				let ty =
+				let b_info =
 					let open Xenlight.Domain_build_info in
 					match vm.Vm.ty with
 					| HVM hvm_info ->
-						Hvm { default_hvm with
-							bios = Xenlight.BIOS_TYPE_ROMBIOS;
-							pae = Some true;
-							apic = Some true;
-							acpi = Some hvm_info.Xenops_interface.Vm.acpi;
-							nx = Some true;
-							timeoffset = Some hvm_info.Xenops_interface.Vm.timeoffset;
-							timer_mode = Xenlight.TIMER_MODE_ONE_MISSED_TICK_PENDING;
-							nested_hvm = Some true;
-							vga = Xenlight.Vga_interface_info.({kind = Xenlight.VGA_INTERFACE_TYPE_STD});
-							vnc = Xenlight.Vnc_info.({enable = Some true; listen = None; passwd = None; display = 0; findunused = None});
-							keymap = hvm_info.Xenops_interface.Vm.keymap;
-							sdl = Xenlight.Sdl_info.({enable = None; opengl = None; display = None; xauthority = None});
-							spice = Xenlight.Spice_info.({enable = None; port = 0; tls_port = 0; host = None; disable_ticketing = None; passwd = None; agent_mouse = None});
-							serial = hvm_info.Xenops_interface.Vm.serial;
-							boot = Some hvm_info.Xenops_interface.Vm.boot_order;
-							usb = Some true;
-							usbdevice = Some "tablet";
+						let b_info_default = with_ctx (fun ctx -> default ctx ~ty:Xenlight.DOMAIN_TYPE_HVM ()) in
+						let b_info_hvm_default =
+							match b_info_default with
+							| { ty = Hvm b_info_hvm_default } ->
+								b_info_hvm_default
+							| _ -> failwith "Expected HVM build_info here!"
+						in
+						{ b_info_default with
+							ty = Hvm { b_info_hvm_default with
+								bios = Xenlight.BIOS_TYPE_ROMBIOS;
+								pae = Some true;
+								apic = Some true;
+								acpi = Some hvm_info.Xenops_interface.Vm.acpi;
+								nx = Some true;
+								timeoffset = Some hvm_info.Xenops_interface.Vm.timeoffset;
+								timer_mode = Xenlight.TIMER_MODE_ONE_MISSED_TICK_PENDING;
+								nested_hvm = Some true;
+(*								vga = Xenlight.Vga_interface_info.({kind = Xenlight.VGA_INTERFACE_TYPE_STD}); *)
+								vnc = Xenlight.Vnc_info.({enable = Some true; listen = None; passwd = None; display = 0; findunused = None});
+								keymap = hvm_info.Xenops_interface.Vm.keymap;
+(*								sdl = Xenlight.Sdl_info.({enable = None; opengl = None; display = None; xauthority = None});
+								spice = Xenlight.Spice_info.({enable = None; port = 0; tls_port = 0; host = None; disable_ticketing = None; passwd = None; agent_mouse = None});*)
+								serial = hvm_info.Xenops_interface.Vm.serial;
+								boot = Some hvm_info.Xenops_interface.Vm.boot_order;
+								usb = Some true;
+								usbdevice = Some "tablet";
+							}
 						}
 					| PV { Xenops_interface.Vm.boot = Direct direct } ->
-						Pv { default_pv with
-							kernel = Some direct.Xenops_interface.Vm.kernel;
-							cmdline = Some direct.Xenops_interface.Vm.cmdline;
-							ramdisk = direct.Xenops_interface.Vm.ramdisk;
+						let b_info_default = with_ctx (fun ctx -> default ctx ~ty:Xenlight.DOMAIN_TYPE_PV ()) in
+						let b_info_pv_default =
+							match b_info_default with
+							| { ty = Pv b_info_pv_default } -> b_info_pv_default
+							| _ -> failwith "Expected PV build_info here!"
+						in
+						{ b_info_default with
+							ty = Pv { b_info_pv_default with
+								kernel = Some direct.Xenops_interface.Vm.kernel;
+								cmdline = Some direct.Xenops_interface.Vm.cmdline;
+								ramdisk = direct.Xenops_interface.Vm.ramdisk;
+							}
 						}
 					| PV { Xenops_interface.Vm.boot = Indirect { devices = [] } } ->
 						raise (No_bootable_device)
 					| PV { Xenops_interface.Vm.boot = Indirect ( { devices = d :: _ } as i ) } ->
-						Pv { default_pv with
-							bootloader = Some i.Xenops_interface.Vm.bootloader;
-							bootloader_args = (*i.bootloader_args :: i.legacy_args :: i.extra_args ::*) [];
+						let b_info_default = with_ctx (fun ctx -> default ctx ~ty:Xenlight.DOMAIN_TYPE_PV ()) in
+						let b_info_pv_default =
+							match b_info_default with
+							| { ty = Pv b_info_pv_default } -> b_info_pv_default
+							| _ -> failwith "Expected PV build_info here!"
+						in
+						{ b_info_default with
+							ty = Pv { b_info_pv_default with
+								bootloader = Some i.Xenops_interface.Vm.bootloader;
+								bootloader_args = (*i.bootloader_args :: i.legacy_args :: i.extra_args ::*) [];
+							}
 						}
 				in
 				let k = vm.Vm.id in
@@ -2138,7 +2163,7 @@ module VM = struct
 				(*	let open Xenlight.Device_vfb in
 					match vm.Vm.ty with
 					| Vm.PV _ ->
-						[|{ default with
+						[|{ default () with
 							vnc = Xenlight.Vnc_info.({enable = Some false; listen = None; passwd = None; display = 0; findunused = None});
 						}|]
 					| Vm.HVM _ -> [||]*)
@@ -2151,7 +2176,7 @@ module VM = struct
 				in
 
 				(* create and build structures *)
-				let c_info = Xenlight.Domain_create_info.({ default with
+				let c_info = Xenlight.Domain_create_info.({ with_ctx (fun ctx -> default ctx ()) with
 					ty = (if hvm then Xenlight.DOMAIN_TYPE_HVM else Xenlight.DOMAIN_TYPE_PV);
 					hap = Some hvm;
 					ssidref = vm.Vm.ssidref;
@@ -2161,7 +2186,7 @@ module VM = struct
 					xsdata = vm.Vm.xsdata;
 					platformdata = non_persistent.VmExtra.create_info.Domain.platformdata;
 				}) in
-				let b_info = Xenlight.Domain_build_info.({ default with
+				let b_info = Xenlight.Domain_build_info.({ b_info with
 					max_vcpus;
 					max_memkb;
 					target_memkb;
@@ -2174,8 +2199,7 @@ module VM = struct
 					extra = [];
 					extra_pv = [];
 					extra_hvm = [];
-					sched_params = Xenlight.Domain_sched_params.({default with weight = -1; cap = -1; period = -1; slice = -1; latency = -1; extratime = -1});
-					ty;
+					sched_params = Xenlight.Domain_sched_params.({with_ctx (fun ctx -> default ctx ()) with weight = -1; cap = -1; period = -1; slice = -1; latency = -1; extratime = -1});
 				}) in
 				let domain_config = Xenlight.Domain_config.({
 					c_info;
