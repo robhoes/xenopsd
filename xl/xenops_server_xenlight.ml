@@ -71,7 +71,7 @@ let create_logger ?(level=Xentoollog.Info) () =
 		vmessage = vmessage level;
 		progress = progress;
 	} in
-	create "Xentoollog.stdio_logger" cbs
+	create "Xentoollog.syslog_logger" cbs
 
 let ctx = ref None
 
