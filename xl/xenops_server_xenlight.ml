@@ -81,7 +81,11 @@ let with_ctx f =
 		error "No libxl context!";
 		failwith "No libxl context!"
 	| Some ctx' ->
-		f ctx'
+		try
+			f ctx'
+		with Xenlight.Error (a, s) as e ->
+			error "Xenlight error: %s: %s" (Xenlight.string_of_error a) s;
+			raise e
 
 (* *)
 
