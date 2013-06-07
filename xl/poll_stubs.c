@@ -1,4 +1,6 @@
+#include <stdio.h>
 #include <poll.h>
+#include <errno.h>
 #include <caml/alloc.h>
 #include <caml/memory.h>
 #include <caml/signals.h>
@@ -126,9 +128,13 @@ value stub_poll(value fds, value timeout)
 		fds = Field(fds, 1);
 	}
 
+	fprintf(stderr, "calling poll, nfds=%d\n", c_nfds);
 	caml_enter_blocking_section();
 	rc = poll(c_fds, c_nfds, c_timeout);
 	caml_leave_blocking_section();
+
+	if (rc == -1)
+		fprintf(stderr, "poll error: %d\n", errno);
 
 	for (i = c_nfds - 1; i >= 0; i--) {
 		tmp = caml_alloc(2, 0);

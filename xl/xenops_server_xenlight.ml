@@ -684,7 +684,8 @@ module PCI = struct
 				debug "Calling Xenlight.Device_pci.assignable_remove";
 				assignable_add ctx pci' true;
 				debug "Calling Xenlight.Device_pci.add";
-				add ctx pci' frontend_domid;
+				Xenlight_events.async (add ctx pci' frontend_domid);
+				debug "Call Xenlight.Device_pci.add completed";
 			)
 		) Newest vm
 
@@ -707,7 +708,8 @@ module PCI = struct
 					func; dev; bus; domain; vdevfn; vfunc_mask; msitranslate; power_mgmt; permissive;
 				} in
 				debug "Calling Xenlight.Device_pci.destroy";
-				destroy ctx pci' frontend_domid;
+				Xenlight_events.async (destroy ctx pci' frontend_domid);
+				debug "Call Xenlight.Device_pci.destroy completed";
 				debug "Calling Xenlight.Device_pci.assignable_remove";
 				assignable_remove ctx pci' true;
 			)
@@ -877,7 +879,8 @@ module VBD = struct
 							with_ctx (fun ctx ->
 								let open Xenlight.Device_disk in
 								debug "Calling Xenlight.Device_disk.add";
-								add ctx disk frontend_domid
+								Xenlight_events.async (add ctx disk frontend_domid);
+								debug "Call Xenlight.Device_disk.add completed"
 							);
 							(* write extra XS keys *)
 							write_extra backend_domid frontend_domid devid extra_backend_keys;
@@ -935,10 +938,12 @@ module VBD = struct
 							Xenops_task.with_subtask task (Printf.sprintf "Vbd.clean_shutdown %s" (id_of vbd)) (fun () ->
 								if force then begin
 									debug "Calling Xenlight.Device_disk.destroy";
-									Xenlight.Device_disk.destroy ctx disk domid
+									Xenlight_events.async (Xenlight.Device_disk.destroy ctx disk domid);
+									debug "Call Xenlight.Device_disk.destroy completed"
 								end else begin
 									debug "Calling Xenlight.Device_disk.remove";
-									Xenlight.Device_disk.remove ctx disk domid
+									Xenlight_events.async (Xenlight.Device_disk.remove ctx disk domid);
+									debug "Call Xenlight.Device_disk.remove completed"
 								end
 							)
 						| _ -> ()
@@ -999,7 +1004,7 @@ module VBD = struct
 
 							Xenops_task.with_subtask task (Printf.sprintf "Vbd.insert %s" (id_of vbd)) (fun () ->
 								debug "Calling Xenlight.Device_disk.insert";
-								insert ctx disk' domid
+								insert ctx disk' domid ()
 							);
 
 							(* Workaround the fact that libxl prepends "aio:" at the params field, before the pdev_path *)
@@ -1029,7 +1034,7 @@ module VBD = struct
 
 						Xenops_task.with_subtask task (Printf.sprintf "Vbd.eject %s" (id_of vbd)) (fun () ->
 							debug "Calling Xenlight.Device_disk.insert";
-							insert ctx disk' domid
+							insert ctx disk' domid ()
 						);
 
 						let (device: Device_common.device) = device_by_id xc xs vm Device_common.Vbd Oldest (id_of vbd) in
@@ -1261,7 +1266,7 @@ module VIF = struct
 						with_ctx (fun ctx ->
 							let open Xenlight.Device_nic in
 							debug "Calling Xenlight.Device_nic.add";
-							add ctx nic frontend_domid
+							add ctx nic frontend_domid ()
 						);
 
 						(* wait for plug (to be removed if possible) *)
@@ -1289,10 +1294,10 @@ module VIF = struct
 					Xenops_task.with_subtask task (Printf.sprintf "Vif.hard_shutdown %s" (id_of vif)) (fun () ->
 						if force then begin
 							debug "Calling Xenlight.Device_nic.destroy";
-							Xenlight.Device_nic.destroy ctx nic frontend_domid
+							Xenlight.Device_nic.destroy ctx nic frontend_domid ()
 						end else begin
 							debug "Calling Xenlight.Device_nic.remove";
-							Xenlight.Device_nic.remove ctx nic frontend_domid
+							Xenlight.Device_nic.remove ctx nic frontend_domid ()
 						end
 					);
 					let device = device_by_id xc xs vm Device_common.Vif Oldest (id_of vif) in
@@ -2102,7 +2107,7 @@ module VM = struct
 								acpi = Some hvm_info.Xenops_interface.Vm.acpi;
 								nx = Some true;
 								timeoffset = Some hvm_info.Xenops_interface.Vm.timeoffset;
-								timer_mode = Xenlight.TIMER_MODE_ONE_MISSED_TICK_PENDING;
+(*								timer_mode = Xenlight.TIMER_MODE_ONE_MISSED_TICK_PENDING;*)
 								nested_hvm = Some true;
 (*								vga = Xenlight.Vga_interface_info.({kind = Xenlight.VGA_INTERFACE_TYPE_STD}); *)
 								vnc = Xenlight.Vnc_info.({enable = Some true; listen = None; passwd = None; display = 0; findunused = None});
@@ -2227,6 +2232,7 @@ module VM = struct
 							debug "Calling Xenlight.domain_create_new";
 							(* results of async call must be 0, otherwise something went wrong *)
 							with_ctx (fun ctx -> Xenlight_events.async (Xenlight.Domain.create_new ctx domain_config))
+						(*	Mutex.execute Xenlight_events.xl_m (fun () -> with_ctx (fun ctx -> Xenlight.Domain.create_new ctx domain_config ()))*)
 						| Some fd ->
 							debug "Calling Xenlight.domain_create_restore";
 							with_ctx (fun ctx -> Xenlight_events.async (Xenlight.Domain.create_restore ctx domain_config fd))
@@ -3199,7 +3205,7 @@ let init () =
 
 	with_ctx (fun ctx ->
 		Xenlight_events.event_loop_init ctx;
-(*		Xenlight.evenable_domain_death ctx 47 666 *)
+		Xenlight_events.E.evenable_domain_death ctx 47 666
 	);
 
 	debug "xenstore is responding to requests";
