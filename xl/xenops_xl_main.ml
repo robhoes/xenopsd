@@ -13,4 +13,11 @@
  *)
 
 (* Start the program with the xenlight backend *)
-let _ = Xenopsd.main (module Xenops_server_xenlight: Xenops_server_plugin.S)
+let _ =
+	Xenops_interface.queue_name := !Xenops_interface.queue_name ^ ".xenlight";
+	Xenops_utils.set_root "xenopsd/xenlight";
+	Xenopsd.main
+		~specific_essential_paths:Xl_path.essentials
+		~specific_nonessential_paths:Xl_path.nonessentials
+		(module Xenops_server_xenlight: Xenops_server_plugin.S)
+
