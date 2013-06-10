@@ -691,7 +691,7 @@ let add (task: Xenops_task.t) ~xs ~devid ~netty ~mac ~carrier ?mtu ?(rate=None) 
 		"frontend-id", sprintf "%u" domid;
 		"online", "1";
 		"state", string_of_int (Xenbus_utils.int_of Xenbus_utils.Initialising);
-		"script", !Path.vif_script;
+		"script", !Xl_path.vif_script;
 		"mac", mac;
 		"handle", string_of_int devid
 	] @ back_options in
@@ -762,7 +762,7 @@ let move ~xs (x: device) bridge =
 	xs.Xs.write xs_bridge_path bridge;
 	let domid = string_of_int x.frontend.domid in
 	let devid = string_of_int x.frontend.devid in
-	ignore (Forkhelpers.execute_command_get_output !Path.vif_script ["move"; "vif"; domid; devid])
+	ignore (Forkhelpers.execute_command_get_output !Xl_path.vif_script ["move"; "vif"; domid; devid])
 end
 
 (*****************************************************************************)
@@ -814,7 +814,7 @@ let is_cmdline_valid domid pid =
 		|> Unixext.string_of_file
 		|> Re_str.split null
 	in
-	if (List.mem !Path.vncterm cmdline) && (List.mem (vnc_console_path domid) cmdline)
+	if (List.mem !Xl_path.vncterm cmdline) && (List.mem (vnc_console_path domid) cmdline)
 	then true
 	else false
 
@@ -878,15 +878,16 @@ let save ~xs domid =
 	| None     -> ()
 
 let start ?statefile ~xs ?ip domid =
+        debug "In PV_Vnc.start";
 	let ip = Opt.default "127.0.0.1" ip in
-	let l = [ string_of_int domid; (* absorbed by vncterm-wrapper *)
-		  (* everything else goes straight through to vncterm: *)
-		  "-x"; sprintf "/local/domain/%d/console" domid;
+	let l = [ "-x"; sprintf "/local/domain/%d/console" domid;
 		  "-T"; (* listen for raw connections *)
 		  "-v"; ip ^ ":1";
 		] @ load_args statefile in
 	(* Now add the close fds wrapper *)
-	let pid = Forkhelpers.safe_close_and_exec None None None [] !Path.vncterm_wrapper l in
+	let pid = Forkhelpers.safe_close_and_exec None None None [] !Xl_path.vncterm l in
+	let path = vnc_pid_path domid in
+	xs.Xs.write path (string_of_int (Forkhelpers.getpid pid));
 	Forkhelpers.dontwaitpid pid
 
 let stop ~xs domid =
@@ -1169,8 +1170,8 @@ let do_flr device =
 	debug "Doing FLR on pci device: %s" device;
 	let doflr = "/sys/bus/pci/drivers/pciback/do_flr" in
 	let callscript s devstr =
-		if Sys.file_exists !Path.pci_flr_script then begin
-			try ignore (Forkhelpers.execute_command_get_output !Path.pci_flr_script [ s; devstr; ])
+		if Sys.file_exists !Xl_path.pci_flr_script then begin
+			try ignore (Forkhelpers.execute_command_get_output !Xl_path.pci_flr_script [ s; devstr; ])
 			with _ -> ()
 		end
 	in

@@ -832,7 +832,7 @@ module VBD = struct
 		let devid, vdev = devid_and_vdev_of_vbd vm vbd in
 		let backend = Xenlight.DISK_BACKEND_PHY in
 		let format = Xenlight.DISK_FORMAT_RAW in
-		let script = !Path.vbd_script in
+		let script = !Xl_path.vbd_script in
 		let removable = if vbd.unpluggable then 1 else 0 in
 		let readwrite = match vbd.mode with
 			| ReadOnly -> 0
@@ -1232,7 +1232,7 @@ module VIF = struct
 		let mtu = vif.mtu in
 		let mac = Scanf.sscanf vif.mac "%02x:%02x:%02x:%02x:%02x:%02x" (fun a b c d e f -> [| a; b; c; d; e; f|]) in
 		let bridge = bridge_of_vif vif.backend in
-		let script = !Path.vif_script in
+		let script = !Xl_path.vif_script in
 		let nictype = Xenlight.NIC_TYPE_VIF in
 
 		let locking_mode = xenstore_of_locking_mode vif.locking_mode in
@@ -1317,7 +1317,7 @@ module VIF = struct
 		xs.Xs.write xs_bridge_path bridge;
 		let domid = string_of_int device.frontend.domid in
 		let devid = string_of_int device.frontend.devid in
-		ignore (Forkhelpers.execute_command_get_output !Path.vif_script ["move"; "vif"; domid; devid])
+		ignore (Forkhelpers.execute_command_get_output !Xl_path.vif_script ["move"; "vif"; domid; devid])
 
 	let move task vm vif network =
 		let vm_t = DB.read_exn vm in
@@ -1381,11 +1381,11 @@ module VIF = struct
 
 				let domid = string_of_int device.frontend.domid in
 				let devid = string_of_int device.frontend.devid in
-                ignore (run !Path.setup_vif_rules ["vif"; domid; devid; "filter"]);
+                ignore (run !Xl_path.setup_vif_rules ["vif"; domid; devid; "filter"]);
                 (* Update rules for the tap device if the VM has booted HVM with no PV drivers. *)
 				let di = with_ctx (fun ctx -> Xenlight.Dominfo.get ctx device.frontend.domid) in
 				if di.Xenlight.Dominfo.domain_type = Xenlight.DOMAIN_TYPE_HVM
-				then ignore (run !Path.setup_vif_rules ["tap"; domid; devid; "filter"])
+				then ignore (run !Xl_path.setup_vif_rules ["tap"; domid; devid; "filter"])
 			)
 
 	let get_state vm vif =
@@ -1923,7 +1923,7 @@ module VM = struct
 							Domain.shadow_multiplier = hvm_info.shadow_multiplier;
 							video_mib = hvm_info.video_mib;
 						} in
-						((make_build_info !Path.hvmloader builder_spec_info), hvm_info.timeoffset)
+						((make_build_info !Xl_path.hvmloader builder_spec_info), hvm_info.timeoffset)
 					| PV { boot = Direct direct } ->
 						let builder_spec_info = Domain.BuildPV {
 							Domain.cmdline = direct.cmdline;
@@ -2327,13 +2327,13 @@ module VM = struct
 	(* Create an ext2 filesystem without maximal mount count and
 	   checking interval. *)
 	let mke2fs device =
-		run !Path.mkfs ["-t"; "ext2"; device] |> ignore_string;
-		run !Path.tune2fs  ["-i"; "0"; "-c"; "0"; device] |> ignore_string
+		run !Xl_path.mkfs ["-t"; "ext2"; device] |> ignore_string;
+		run !Xl_path.tune2fs  ["-i"; "0"; "-c"; "0"; device] |> ignore_string
 
 	(* Mount a filesystem somewhere, with optional type *)
 	let mount ?ty:(ty = None) src dest =
 		let ty = match ty with None -> [] | Some ty -> [ "-t"; ty ] in
-		run !Path.mount (ty @ [ src; dest ]) |> ignore_string
+		run !Xl_path.mount (ty @ [ src; dest ]) |> ignore_string
 
 	let timeout = 300. (* 5 minutes: something is seriously wrong if we hit this timeout *)
 	exception Umount_timeout
@@ -2345,7 +2345,7 @@ module VM = struct
 
 		while not(!finished) && (Unix.gettimeofday () -. start < timeout) do
 			try
-				run !Path.umount [dest] |> ignore_string;
+				run !Xl_path.umount [dest] |> ignore_string;
 				finished := true
 			with e ->
 				if not(retry) then raise e;
