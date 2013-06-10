@@ -85,8 +85,11 @@ let event_loop_start ctx =
 			warn "EVENTLOOP: poll error %d" rc
 		else if rc = 0 then begin
 			debug "EVENTLOOP: timeout occurred";
-			Opt.iter (fun (_, _, for_libxl) -> Mutex.execute xl_m (fun () -> osevent_occurred_timeout ctx for_libxl)) !timeout;
-			Mutex.execute timeout_m (fun () -> timeout := None)
+			Opt.iter (fun (s, us, for_libxl) ->
+				if s = 0 && us = 0 then
+					Mutex.execute timeout_m (fun () -> timeout := None);
+				Mutex.execute xl_m (fun () -> osevent_occurred_timeout ctx for_libxl)
+			) !timeout
 		end else begin
 			(* callbacks into libxl *)
 			List.iter2 (fun (fd, events, for_libxl) revents ->
@@ -128,19 +131,16 @@ let event_loop_init ctx =
 	let timeout_register user s us for_libxl =
 		debug "EVENTREG: registering timeout for %d (%ds, %dus)" user s us;
 		Mutex.execute timeout_m (fun () -> timeout := Some (s, us, for_libxl));
-		ignore (Unix.write interrupt_out "t" 0 1);
-		()
+		ignore (Unix.write interrupt_out "t" 0 1)
 	in
 	let timeout_modify user =
-		debug "EVENTREG: modifying timeout for %d" user;
 		match !timeout with
 		| Some (_, _, for_libxl) ->
+			debug "EVENTREG: modifying timeout for %d" user;
 			Mutex.execute timeout_m (fun () -> timeout := Some (0, 0, for_libxl));
-			ignore (Unix.write interrupt_out "t" 0 1);
-			()
+			ignore (Unix.write interrupt_out "t" 0 1)
 		| None ->
-			error "EVENTREG: modifying timeout without preceeding timeout register!.";
-			()
+			warn "EVENTREG: ignoring timeout-modify (not registered)"
 	in
 	debug "EVENTREG: Registering event hooks";
 	Unix.set_nonblock interrupt_out;
