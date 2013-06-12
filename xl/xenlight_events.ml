@@ -38,15 +38,22 @@ let fired = ref None
 let async f =
 	debug "ASYNC call";
 	let user = Condition.create () in
-	Mutex.execute xl_m (fun () -> E.async f user);
+	let result = Mutex.execute xl_m (fun () -> E.async f user) in
 	debug "ASYNC call returned";
 	Mutex.lock m;
 	if !fired = None then
 		Condition.wait user m;
-	let result = match !fired with Some x -> x | None -> failwith "help!" in
-	fired := None;
-	Mutex.unlock m;
-	result
+	match !fired with
+	| None ->
+		failwith "help!"
+	| Some (Some e) ->
+		fired := None;
+		Mutex.unlock m;
+		raise (Error (e, "async call"))
+	| Some None ->
+		fired := None;
+		Mutex.unlock m;
+		result
 
 let async_callback ~result ~user =
 	debug "ASYNC callback";
