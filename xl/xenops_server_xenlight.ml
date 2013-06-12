@@ -2226,20 +2226,15 @@ module VM = struct
 
 				(* Start or resume *)
 				let domid =
-					try
-						match restore_fd with
-						| None ->
-							debug "Calling Xenlight.domain_create_new";
-							(* results of async call must be 0, otherwise something went wrong *)
-							with_ctx (fun ctx -> Xenlight_events.async (Xenlight.Domain.create_new ctx domain_config))
-						(*	Mutex.execute Xenlight_events.xl_m (fun () -> with_ctx (fun ctx -> Xenlight.Domain.create_new ctx domain_config ()))*)
-						| Some fd ->
-							debug "Calling Xenlight.domain_create_restore";
-							with_ctx (fun ctx -> Xenlight_events.async (Xenlight.Domain.create_restore ctx domain_config fd))
-					with
-					| Xenlight.Error (_, msg) as e ->
-						error "error creating domain: %s" msg;
-						raise e
+					match restore_fd with
+					| None ->
+						debug "Calling Xenlight.domain_create_new";
+						(* results of async call must be 0, otherwise something went wrong *)
+					(*	with_ctx (fun ctx -> Xenlight_events.async (Xenlight.Domain.create_new ctx domain_config))*)
+						Mutex.execute Xenlight_events.xl_m (fun () -> with_ctx (fun ctx -> Xenlight.Domain.create_new ctx domain_config ()))
+					| Some fd ->
+						debug "Calling Xenlight.domain_create_restore";
+						with_ctx (fun ctx -> Xenlight_events.async (Xenlight.Domain.create_restore ctx domain_config fd))
 				in
 				debug "Xenlight has created domain %d" domid;
 
