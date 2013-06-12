@@ -3200,7 +3200,7 @@ let init () =
 
 	with_ctx (fun ctx ->
 		Xenlight_events.event_loop_init ctx;
-		Xenlight_events.E.evenable_domain_death ctx 47 666
+	(*	Xenlight_events.E.evenable_domain_death ctx 47 666 *)
 	);
 
 	debug "xenstore is responding to requests";
