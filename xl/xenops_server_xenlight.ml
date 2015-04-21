@@ -624,7 +624,7 @@ module PCI = struct
 				debug "Calling Xenlight.Device_pci.assignable_remove";
 				assignable_add ctx pci' true;
 				debug "Calling Xenlight.Device_pci.add";
-				Xenlight_events.async (add ctx pci' frontend_domid); 
+				Xenlight_events.sync (add_async ctx pci' frontend_domid);
 				debug "Call Xenlight.Device_pci.add completed";
 			)
 		) Newest vm
@@ -645,7 +645,7 @@ module PCI = struct
 					func; dev; bus; domain; msitranslate; power_mgmt
 				} in
 				debug "Calling Xenlight.Device_pci.destroy";
-				Xenlight_events.async (destroy ctx pci' frontend_domid); 
+				Xenlight_events.sync (destroy_async ctx pci' frontend_domid);
 				debug "Call Xenlight.Device_pci.destroy completed";
 				debug "Calling Xenlight.Device_pci.assignable_remove";
 				assignable_remove ctx pci' true;
@@ -828,7 +828,7 @@ module VBD = struct
 						is_cdrom = 0;
 					} in
 					debug "Calling Xenlight.Device_disk.add";
-					Xenlight_events.async (add ctx disk frontend_domid); 
+					Xenlight_events.sync (add_async ctx disk frontend_domid);
 					debug "Call Xenlight.Device_disk.add completed"
 				);
 				(* write extra XS keys *)
@@ -880,7 +880,7 @@ module VBD = struct
 					let disk = Xenlight.Device_disk.of_vdev ctx domid vdev in
 					Xenops_task.with_subtask task (Printf.sprintf "Vbd.clean_shutdown") (fun () ->
 						debug "Calling Xenlight.Device_disk.remove";
-						Xenlight_events.async (Xenlight.Device_disk.remove ctx disk domid); 
+						Xenlight_events.sync (Xenlight.Device_disk.remove_async ctx disk domid); 
 						debug "Call Xenlight.Device_disk.remove completed"
 					)
 				)
@@ -1047,7 +1047,7 @@ module VBD = struct
 							with_ctx (fun ctx ->
 								let open Xenlight.Device_disk in
 								debug "Calling Xenlight.Device_disk.add";
-								Xenlight_events.async (add ctx disk frontend_domid); 
+								Xenlight_events.sync (add_async ctx disk frontend_domid);
 								debug "Call Xenlight.Device_disk.add completed"
 							);
 							(* write extra XS keys *)
@@ -1106,11 +1106,11 @@ module VBD = struct
 							Xenops_task.with_subtask task (Printf.sprintf "Vbd.clean_shutdown %s" (id_of vbd)) (fun () ->
 								if force then begin
 									debug "Calling Xenlight.Device_disk.destroy";
-									Xenlight_events.async (Xenlight.Device_disk.destroy ctx disk domid); 
+									Xenlight_events.sync (Xenlight.Device_disk.destroy_async ctx disk domid);
 									debug "Call Xenlight.Device_disk.destroy completed"
 								end else begin
 									debug "Calling Xenlight.Device_disk.remove";
-									Xenlight_events.async (Xenlight.Device_disk.remove ctx disk domid); 
+									Xenlight_events.sync (Xenlight.Device_disk.remove_async ctx disk domid);
 									debug "Call Xenlight.Device_disk.remove completed"
 								end
 							)
@@ -1168,7 +1168,7 @@ module VBD = struct
 
 							Xenops_task.with_subtask task (Printf.sprintf "Vbd.insert %s" (id_of vbd)) (fun () ->
 								debug "Calling Xenlight.Device_disk.insert";
-								insert ctx disk' domid ()
+								Xenlight_events.sync (insert_async ctx disk' domid)
 							);
 
 							(* Workaround the fact that libxl prepends "aio:" at the params field, before the pdev_path *)
@@ -1199,7 +1199,7 @@ module VBD = struct
 
 						Xenops_task.with_subtask task (Printf.sprintf "Vbd.eject %s" (id_of vbd)) (fun () ->
 							debug "Calling Xenlight.Device_disk.insert";
-							insert ctx disk' domid ()
+							Xenlight_events.sync (insert_async ctx disk' domid)
 						);
 
 						let (device: Device_common.device) = device_by_id xs vm kind Oldest (id_of vbd) in
@@ -1369,7 +1369,7 @@ module VIF = struct
 						with_ctx (fun ctx ->
 							let open Xenlight.Device_nic in
 							debug "Calling Xenlight.Device_nic.add";
-							add ctx nic frontend_domid ()
+							Xenlight_events.sync (add_async ctx nic frontend_domid)
 						);
 
 						(* wait for plug (to be removed if possible) *)
@@ -1397,10 +1397,10 @@ module VIF = struct
 					Xenops_task.with_subtask task (Printf.sprintf "Vif.hard_shutdown %s" (id_of vif)) (fun () ->
 						if force then begin
 							debug "Calling Xenlight.Device_nic.destroy";
-							Xenlight.Device_nic.destroy ctx nic frontend_domid ()
+							Xenlight_events.sync (Xenlight.Device_nic.destroy_async ctx nic frontend_domid)
 						end else begin
 							debug "Calling Xenlight.Device_nic.remove";
-							Xenlight.Device_nic.remove ctx nic frontend_domid ()
+							Xenlight_events.sync (Xenlight.Device_nic.remove_async ctx nic frontend_domid)
 						end
 					);
 					let device = device_by_id xs vm Device_common.Vif Oldest (id_of vif) in
@@ -1811,7 +1811,7 @@ module VM = struct
 			if DB.exists vm.Vm.id then DB.remove vm.Vm.id;
 		end;
 		debug "Calling Xenlight.domain_destroy domid=%d" domid;
-		with_ctx (fun ctx -> Xenlight.Domain.destroy ctx domid ());
+		with_ctx (fun ctx -> Xenlight_events.sync (Xenlight.Domain.destroy_async ctx domid));
 		debug "Call Xenlight.domain_destroy domid=%d completed" domid;
 
 		let log_exn_continue msg f x = try f x with e -> debug "Safely ignoring exception: %s while %s" (Printexc.to_string e) msg in
@@ -2164,16 +2164,14 @@ module VM = struct
 					match restore_fd with
 					| None ->
 						debug "Calling Xenlight.Domain.create_new";
-(*						let domid = with_ctx (fun ctx -> Xenlight_events.async (Xenlight.Domain.create_new ctx domain_config)) in*)
-						let domid = with_ctx (fun ctx -> Xenlight.Domain.create_new ctx domain_config ()) in
+						let domid = with_ctx (fun ctx -> Xenlight_events.sync (Xenlight.Domain.create_new_async ctx domain_config)) in
 						debug "Call Xenlight.Domain.create_new completed";
 						domid
 					| Some fd ->
-						debug "Calling Xenlight.domain_create_restore";
+						debug "Calling Xenlight.Domain.create_restore";
 						with_ctx (fun ctx ->
 							let params = Xenlight.Domain_restore_params.default ctx () in
-(*							let domid = Xenlight_events.async (Xenlight.Domain.create_restore ctx domain_config (fd, params)) in*)
-							let domid = Xenlight.Domain.create_restore ctx domain_config (fd, params) () in
+							let domid = Xenlight_events.sync (Xenlight.Domain.create_restore_async ctx domain_config (fd, params)) in
 							debug "Call Xenlight.Domain.create_restore completed";
 							domid
 						)
@@ -2376,7 +2374,7 @@ module VM = struct
 						debug "Writing save signature";
 						Io.write fd suspend_save_signature;
 						debug "Calling Xenlight.Domain.suspend domid=%d" domid;
-						with_ctx (fun ctx -> Xenlight.Domain.suspend ctx domid fd ());
+						with_ctx (fun ctx -> Xenlight_events.sync (Xenlight.Domain.suspend_async ctx domid fd));
 						debug "Call Xenlight.Domain.suspend domid=%d completed" domid;
 						ignore (wait_shutdown task vm Suspend 1200.);
 
@@ -2394,7 +2392,7 @@ module VM = struct
 							let disks = list ctx domid in
 							List.iter (fun disk ->
 								debug "Calling Xenlight.Device_disk.destroy";
-								destroy ctx disk domid ();
+								Xenlight_events.sync (destroy_async ctx disk domid);
 								debug "Call Xenlight.Device_disk.destroy completed";
 							) disks;
 							debug "VM = %s; domid = %d; Disk backends have all been flushed" vm.Vm.id domid;

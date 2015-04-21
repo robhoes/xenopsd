@@ -55,24 +55,23 @@ let event_disaster_callback user event_type msg errnoval =
 
 (* async callbacks *)
 
-let async f =
+let sync call =
 	debug "ASYNC call";
 	let box = Mailbox.create () in
-	let result = f ?async:(Some box) () in
+	call (fun result ->
+		debug "ASYNC callback";
+		Mailbox.post box result;
+		debug "ASYNC sent event notification"
+	);
 	debug "ASYNC call returned";
-	let ret = Mailbox.receive box in
+	let result = Mailbox.receive box in
 	debug "ASYNC synced with callback";
-	match ret with
-	| None ->
-		result
-	| Some e ->
+	match result with
+	| Ok outcome ->
+		outcome
+	| Fail e ->
 		debug "libxl raised %s" (Xenlight.string_of_error e);
 		raise (Error (e, "async call"))
-
-let async_callback ~result ~user =
-	debug "ASYNC callback";
-	Mailbox.post user result;
-	debug "ASYNC sent event notification"
 
 (* event registration and main loop *)
 
@@ -196,6 +195,6 @@ let event_loop_init ctx =
 	Unix.set_nonblock interrupt_out;
 	let _ = osevent_register_hooks ctx ~user:0 ~fd_register ~fd_modify ~fd_deregister ~timeout_register ~timeout_fire_now in
 	let _ = event_register_callbacks ctx ~user:"xenopsd-event" ~event_occurs_callback ~event_disaster_callback in
-	let _ = async_register_callback ~async_callback in
+	let _ = async_register_callbacks () in
 	Thread.create (fun () -> event_loop_start ctx) ()
 
