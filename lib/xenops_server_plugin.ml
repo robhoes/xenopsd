@@ -51,6 +51,8 @@ let string_of_flag = function Live -> "Live"
 
 type progress_cb = float -> unit
 
+type devices = Metadata.device_id list [@@deriving rpcty]
+
 module type S = sig
   val init : unit -> unit
 

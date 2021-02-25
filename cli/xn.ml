@@ -986,7 +986,7 @@ let resume _copts disk x =
   in
   let open Vm in
   let vm, _ = find_by_name x in
-  Client.VM.resume dbg vm.id (Local disk)
+  Client.VM.resume dbg vm.id (Local disk) []
   |> wait_for_task dbg
   |> success_task ignore_task
 

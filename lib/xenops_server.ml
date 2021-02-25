@@ -151,9 +151,9 @@ type operation =
   | VM_shutdown of (Vm.id * float option)
   | VM_reboot of (Vm.id * float option)
   | VM_suspend of (Vm.id * data)
-  | VM_resume of (Vm.id * data)
-  | VM_restore_vifs of Vm.id
-  | VM_restore_devices of (Vm.id * bool)
+  | VM_resume of (Vm.id * data * devices)
+  | VM_restore_vifs of (Vm.id * devices)
+  | VM_restore_devices of (Vm.id * bool * devices)
   | VM_migrate of vm_migrate_op
   | VM_receive_memory of (Vm.id * Vm.id * int64 * Unix.file_descr)
   | VBD_hotplug of Vbd.id
@@ -1391,15 +1391,21 @@ let rec atomics_of_operation = function
       ; [VM_destroy id]
       ]
       |> List.concat
-  | VM_restore_vifs id ->
-      let vifs = VIF_DB.vifs id in
+  | VM_restore_vifs (id, devices) ->
+      let vifs =
+        VIF_DB.vifs id
+        |> List.filter (fun vif -> List.mem (Metadata.Vif vif.Vif.id) devices)
+      in
       [
         List.map (fun vif -> VIF_set_active (vif.Vif.id, true)) vifs
       ; List.map (fun vif -> VIF_plug vif.Vif.id) vifs
       ]
       |> List.concat
-  | VM_restore_devices (id, restore_vifs) ->
-      let vbds_rw, vbds_ro = VBD_DB.vbds id |> vbd_plug_sets in
+  | VM_restore_devices (id, restore_vifs, devices) ->
+      let vbds_rw, vbds_ro =
+        VBD_DB.vbds id
+        |> List.filter (fun vbd -> List.mem (Metadata.Vbd vbd.Vbd.id) devices)
+        |> vbd_plug_sets in
       let vgpus = VGPU_DB.vgpus id in
       let pcis = PCI_DB.pcis id |> pci_plug_order in
       let pcis_other = List.filter (is_not_nvidia_sriov vgpus) pcis in
@@ -1418,7 +1424,7 @@ let rec atomics_of_operation = function
             , Printf.sprintf "VBD.plug RO vm=%s" id
             , List.map (fun vbd -> VBD_plug vbd.Vbd.id) vbds_ro )
         ]
-      ; (if restore_vifs then atomics_of_operation (VM_restore_vifs id) else [])
+      ; (if restore_vifs then atomics_of_operation (VM_restore_vifs (id, devices)) else [])
       ; List.map (fun vgpu -> VGPU_set_active (vgpu.Vgpu.id, true)) vgpus
         (* Nvidia SRIOV PCI devices have been already been plugged *)
       ; [
@@ -1510,7 +1516,7 @@ let rec atomics_of_operation = function
         ]
       ]
       |> List.concat
-  | VM_resume (id, data) ->
+  | VM_resume (id, data, devices) ->
       (* If we've got a vGPU, then save its state will be in the same file *)
       let vgpu_data = if VGPU_DB.ids id = [] then None else Some data in
       let pcis = PCI_DB.pcis id |> pci_plug_order in
@@ -1538,7 +1544,7 @@ let rec atomics_of_operation = function
         ]
       ; vgpu_start_operations
       ; [VM_restore (id, data, vgpu_data)]
-      ; atomics_of_operation (VM_restore_devices (id, true))
+      ; atomics_of_operation (VM_restore_devices (id, true, devices))
       ; [
           (* At this point the domain is considered survivable. *)
           VM_set_domain_action_request (id, None)
@@ -2115,9 +2121,9 @@ and trigger_cleanup_after_failure op t =
   | VM_reboot (id, _)
   | VM_shutdown (id, _)
   | VM_suspend (id, _)
-  | VM_restore_vifs id
-  | VM_restore_devices (id, _)
-  | VM_resume (id, _) ->
+  | VM_restore_vifs (id, _)
+  | VM_restore_devices (id, _, _)
+  | VM_resume (id, _, _) ->
       immediate_operation dbg id (VM_check_state id)
   | VM_receive_memory (id, final_id, _, _) ->
       immediate_operation dbg id (VM_check_state id) ;
@@ -2229,14 +2235,14 @@ and perform_exn ?subtask ?result (op : operation) (t : Xenops_task.task_handle)
         debug "VM.suspend %s" id ;
         perform_atomics (atomics_of_operation op) t ;
         VM_DB.signal id
-    | VM_restore_vifs id ->
+    | VM_restore_vifs (id, _devices) ->
         debug "VM_restore_vifs %s" id ;
         perform_atomics (atomics_of_operation op) t
-    | VM_restore_devices (id, restore_vifs) ->
+    | VM_restore_devices (id, restore_vifs, _devices) ->
         (* XXX: this is delayed due to the 'attach'/'activate' behaviour *)
         debug "VM_restore_devices %s %b" id restore_vifs ;
         perform_atomics (atomics_of_operation op) t
-    | VM_resume (id, _data) ->
+    | VM_resume (id, _data, _devices) ->
         debug "VM.resume %s" id ;
         perform_atomics (atomics_of_operation op) t ;
         VM_DB.signal id
@@ -2471,7 +2477,7 @@ and perform_exn ?subtask ?result (op : operation) (t : Xenops_task.task_handle)
                    ]
                   @ (* Perform as many operations as possible on the destination
                        domain before pausing the original domain *)
-                  atomics_of_operation (VM_restore_vifs id)
+                  atomics_of_operation (VM_restore_vifs (id, []))
                   )
                   t ;
                 Handshake.send s Handshake.Success
@@ -2537,7 +2543,7 @@ and perform_exn ?subtask ?result (op : operation) (t : Xenops_task.task_handle)
           ) ;
           debug "VM.receive_memory restoring remaining devices and unpausing" ;
           perform_atomics
-            (atomics_of_operation (VM_restore_devices (final_id, false))
+            (atomics_of_operation (VM_restore_devices (final_id, false, []))
             @ [
                 VM_unpause final_id
               ; VM_set_domain_action_request (final_id, None)
@@ -2736,7 +2742,7 @@ and verify_power_state op =
       assert_power_state_is id [Halted]
   | VM_reboot (id, _) ->
       assert_power_state_is id [Running; Paused]
-  | VM_resume (id, _) ->
+  | VM_resume (id, _, _) ->
       (* We also accept Halted here: when resuming a pre-Lima VM, the
          suspend_memory_bytes field in the internal state is always 0, causing
          B.VM.get_state to return Halted. *)
@@ -3126,7 +3132,7 @@ module VM = struct
   let suspend _ dbg id disk =
     queue_operation dbg id (VM_suspend (id, Disk disk))
 
-  let resume _ dbg id disk = queue_operation dbg id (VM_resume (id, Disk disk))
+  let resume _ dbg id disk devices = queue_operation dbg id (VM_resume (id, Disk disk, devices))
 
   let s3suspend _ dbg id = queue_operation dbg id (Atomic (VM_s3suspend id))
 
